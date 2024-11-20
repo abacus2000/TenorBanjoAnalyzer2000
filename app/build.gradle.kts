@@ -18,7 +18,8 @@ repositories {
 
 dependencies {
     // Use JUnit test framework.
-    testImplementation(libs.junit)
+    testImplementation("org.junit.jupiter:junit-jupiter-api:5.8.1")
+    testRuntimeOnly("org.junit.jupiter:junit-jupiter-engine:5.8.1")
     implementation("com.amazonaws:aws-lambda-java-events:3.14.0")
     implementation("com.amazonaws:aws-lambda-java-core:1.2.2")
     implementation("com.amazonaws:aws-lambda-java-log4j2:1.6.0")
@@ -27,10 +28,25 @@ dependencies {
     implementation(libs.guava)
 }
 
+sourceSets {
+    test {
+        java {
+            srcDirs("src/test/java")
+        }
+    }
+}
+
 tasks.register<Zip>("packageJar") {
     into("lib") {
         from(tasks.jar)
         from(configurations.runtimeClasspath)
+    }
+}
+
+tasks.test {
+    useJUnitPlatform()
+    testLogging {
+        events("passed", "skipped", "failed")
     }
 }
 
