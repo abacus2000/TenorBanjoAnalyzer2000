@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Triad Progression by Key</title>
+        <link rel="stylesheet" href="css/styles.css">
+    </head>
+<body>
+    <div class="container">
+        <h1>Diatonic Triads</h1>
+        <p>Select a key and </p>
+        <div>
+            <label for="keySelector">Select Key:</label>
+            <select id="keySelector">
+                <option value="C">C</option>
+                <option value="Db">Db</option>
+                <option value="D">D</option>
+                <option value="Eb">Eb</option>
+                <option value="E">E</option>
+                <option value="F">F</option>
+                <option value="Gb">Gb</option>
+                <option value="G">G</option>
+                <option value="Ab">Ab</option>
+                <option value="A">A</option>
+                <option value="Bb">Bb</option>
+                <option value="B">B</option>
+            </select>
+
+            <label for="scaleTypeSelector">Scale Type:</label>
+            <select id="scaleTypeSelector">
+                <option value="major">Major</option>
+                <option value="natural_minor">Natural Minor</option>
+                <option value="dorian">Dorian</option>
+                <option value="harmonic_minor">Harmonic Minor</option>
+                <option value="melodic_minor">Melodic Minor</option>
+                <option value="mixolydian">Mixolydian</option>
+            </select>
+
+            <label for="patternSelector">Select Pattern:</label>
+            <select id="patternSelector">
+                <option value="I-IV-V">I-IV-V</option>
+                <option value="I-V-vi-IV">I-V-vi-IV</option>
+                <option value="ii-V-I">ii-V-I</option>
+                <option value="I-vi-IV-V">I-vi-IV-V</option>
+                <option value="I-V-vi-iii-IV-I-IV-V">I-V-vi-iii-IV-I-IV-V</option>
+                <option value="All">All</option>
+            </select>
+
+            <label for="maxVariationsSelector" id="maxVariationsLabel">Max Variations:</label>
+            <select id="maxVariationsSelector">
+                <option value="1">1</option>
+                <option value="2" selected>2</option>
+                <option value="3">3</option>
+                <option value="4">4</option>
+                <option value="All">All</option>
+            </select>
+            <label for="ascendingNotesSelector">Ascending Notes Only:</label>
+            <select id="ascendingNotesSelector">
+                <option value="true" selected>Yes</option>
+                <option value="false">No</option>
+            </select>
+            <button id="fetchButton">Generate Progression</button>
+        </div>
+        <div id="result">
+            <div id="progressionInfo"></div>
+            <div id="scaleTable"></div>
+            <div id="chordsTable"></div>
+        </div>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.32/Tone.min.js"></script>
+    <script src="js/script.js"></script> 
+</body>
+</html>
+
