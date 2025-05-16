@@ -29,7 +29,6 @@ public class NoteTest {
 
     @Test
     public void testNoteCreation() {
-        // Note note = new Note("A", 4);
         Note note3 = Note.getInstance("A", 4);
         assertEquals("A", note3.getName());
         assertEquals(4, note3.getOctave());

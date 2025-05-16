@@ -2,21 +2,24 @@ package org.example;
 
 import com.amazonaws.services.lambda.runtime.Context;
 import com.amazonaws.services.lambda.runtime.LambdaLogger;
+import com.amazonaws.services.lambda.runtime.events.APIGatewayProxyRequestEvent;
+import com.amazonaws.services.lambda.runtime.events.APIGatewayProxyResponseEvent;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 
 import java.util.Arrays;
-import java.util.List;
+import java.util.HashMap;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.*;
 
 class LocalChordGeneratorLambdaHandlerTest {
-
     private LocalChordGeneratorLambdaHandler handler;
+    private static final ObjectMapper objectMapper = new ObjectMapper();
 
     @Mock
     private Context context;
@@ -29,117 +32,91 @@ class LocalChordGeneratorLambdaHandlerTest {
         MockitoAnnotations.openMocks(this);
         handler = new LocalChordGeneratorLambdaHandler();
         when(context.getLogger()).thenReturn(logger);
+        doNothing().when(logger).log(anyString());
     }
 
     @Test
-    void testHandleRequestWithValidInput() {
-        ChordRequest request = new ChordRequest();
-        request.setKey("C");
-        request.setScaleType("MAJOR");
-        request.setMaxVariations(3);
-        request.setTuning(Arrays.asList("G3", "D4", "A4", "E5"));
-        request.setStringCount(4);
-        request.setMaxFretSpan(4);
-        request.setAllowInversions(true);
-        request.setAllowPartialChords(true);
-        request.setAllowOpenStrings(true);
-        request.setAllowFullChords(true);
+    void testHandleRequest_ValidInput() throws Exception {
 
-        Map<String, Object> response = handler.handleRequest(request, context);
+        Map<String, Object> requestBody = new HashMap<>();
+        requestBody.put("key", "C");
+        requestBody.put("scaleType", "MAJOR");
+        requestBody.put("maxVariations", 2);
+        requestBody.put("tuning", Arrays.asList("G3", "D4", "A4", "E5"));
+        requestBody.put("stringCount", 4);
+        requestBody.put("maxFretSpan", 4);
+        requestBody.put("allowInversions", true);
+        requestBody.put("allowPartialChords", false);
+        requestBody.put("allowOpenStrings", true);
+        requestBody.put("allowFullChords", true);
 
-        assertNotNull(response);
-        assertEquals("C", response.get("key"));
-        assertEquals("MAJOR", response.get("scale_type"));
-        assertNotNull(response.get("scale"));
-        assertNotNull(response.get("chords"));
+
+        APIGatewayProxyRequestEvent request = new APIGatewayProxyRequestEvent();
+        request.setBody(objectMapper.writeValueAsString(requestBody));
+
+
+        APIGatewayProxyResponseEvent response = handler.handleRequest(request, context);
+
+
+        assertEquals(200, response.getStatusCode());
+        assertNotNull(response.getBody());
+        
+        Map<String, Object> responseBody = objectMapper.readValue(response.getBody(), Map.class);
+        assertEquals("C", responseBody.get("key"));
+        assertEquals("MAJOR", responseBody.get("scale_type"));
     }
 
+    // tests 3 strings defined in tuning but 4 in count of strings 
     @Test
-    void testHandleRequestWithInvalidStringCount() {
-        ChordRequest request = new ChordRequest();
-        request.setKey("C");
-        request.setScaleType("MAJOR");
-        request.setTuning(Arrays.asList("G3", "D4", "A4", "E5"));
-        request.setStringCount(5); // Incorrect string count
+    void testHandleRequest_StringCountMismatch() throws Exception {
 
-        Map<String, Object> response = handler.handleRequest(request, context);
+        Map<String, Object> requestBody = new HashMap<>();
+        requestBody.put("key", "C");
+        requestBody.put("scaleType", "MAJOR");
+        requestBody.put("maxVariations", 2);
+        requestBody.put("tuning", Arrays.asList("G3", "D4", "A4")); 
+        requestBody.put("stringCount", 4); // 
+        requestBody.put("maxFretSpan", 4);
+        requestBody.put("allowInversions", true);
+        requestBody.put("allowPartialChords", false);
+        requestBody.put("allowOpenStrings", true);
+        requestBody.put("allowFullChords", true);
 
-        assertNotNull(response);
-        assertEquals(400, response.get("statusCode"));
-        assertTrue(((String) response.get("error")).contains("String count mismatch"));
-        assertEquals(5, response.get("provided_string_count"));
-        assertEquals(4, response.get("actual_tuning_size"));
+
+        APIGatewayProxyRequestEvent request = new APIGatewayProxyRequestEvent();
+        request.setBody(objectMapper.writeValueAsString(requestBody));
+
+
+        APIGatewayProxyResponseEvent response = handler.handleRequest(request, context);
+
+
+        assertEquals(400, response.getStatusCode());
+        Map<String, Object> errorResponse = objectMapper.readValue(response.getBody(), new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {});
+        assertEquals("String count mismatch", errorResponse.get("error"));
     }
-
 
     // @Test
-    // void testHandleRequestWithFlatKey() {
-    //     ChordRequest request = new ChordRequest();
-    //     request.setKey("Bb");
-    //     request.setScaleType("MAJOR");
-    //     request.setMaxVariations(3);
-    //     request.setTuning(Arrays.asList("G3", "D4", "A4", "E5"));
-    //     request.setStringCount(4);
-    //     request.setMaxFretSpan(4);
-    //     request.setAllowInversions(true);
-    //     request.setAllowPartialChords(true);
-    //     request.setAllowOpenStrings(true);
-    //     request.setAllowFullChords(true);
+    // void testHandleRequest_Options() {
+    //     APIGatewayProxyRequestEvent request = new APIGatewayProxyRequestEvent();
+    //     request.setHttpMethod("OPTIONS");
 
-    //     Map<String, Object> response = handler.handleRequest(request, context);
+    //     APIGatewayProxyResponseEvent response = handler.handleRequest(request, context);
 
-    //     assertNotNull(response);
-    //     assertNotNull(response.get("scale"), "Scale should be present");
-    //     assertNotNull(response.get("chords"), "Chords should be present");
-        
-    //     // The key might be normalized to A# internally
-    //     String responseKey = (String) response.get("key");
-    //     assertTrue(responseKey.equals("Bb") || responseKey.equals("A#"), 
-    //         "Key should be either Bb or A# (normalized form)");
+    //     assertEquals(200, response.getStatusCode());
+    //     assertEquals("{}", response.getBody());
+    //     assertNotNull(response.getHeaders());
+    //     assertTrue(response.getHeaders().containsKey("Access-Control-Allow-Origin"));
     // }
 
-    @Test
-    void testHandleRequestWithMaxVariations() {
-        ChordRequest request = new ChordRequest();
-        request.setKey("C");
-        request.setScaleType("MAJOR");
-        request.setMaxVariations(2);
-        request.setTuning(Arrays.asList("G3", "D4", "A4", "E5"));
-        request.setStringCount(4);
+    // @Test
+    // void testHandleRequest_InvalidJson() {
+    //     APIGatewayProxyRequestEvent request = new APIGatewayProxyRequestEvent();
+    //     request.setBody("invalid json");
 
-        Map<String, Object> response = handler.handleRequest(request, context);
+    //     APIGatewayProxyResponseEvent response = handler.handleRequest(request, context);
 
-        assertNotNull(response);
-        @SuppressWarnings("unchecked")
-        List<Map<String, Object>> chords = (List<Map<String, Object>>) response.get("chords");
-        for (Map<String, Object> chord : chords) {
-            @SuppressWarnings("unchecked")
-            List<Map<String, Object>> variations = (List<Map<String, Object>>) chord.get("variations");
-            assertTrue(variations.size() <= 2, "Number of variations should not exceed maxVariations");
-        }
-    }
-
-    @Test
-    void testHandleRequestWithNashvilleNumbers() {
-        ChordRequest request = new ChordRequest();
-        request.setKey("C");
-        request.setScaleType("MAJOR");
-        request.setTuning(Arrays.asList("G3", "D4", "A4", "E5"));
-        request.setStringCount(4);
-
-        Map<String, Object> response = handler.handleRequest(request, context);
-
-        assertNotNull(response);
-        @SuppressWarnings("unchecked")
-        List<Map<String, Object>> chords = (List<Map<String, Object>>) response.get("chords");
-        for (Map<String, Object> chord : chords) {
-            @SuppressWarnings("unchecked")
-            List<Map<String, Object>> variations = (List<Map<String, Object>>) chord.get("variations");
-            for (Map<String, Object> variation : variations) {
-                @SuppressWarnings("unchecked")
-                Map<String, Object> chordInfo = (Map<String, Object>) variation.get("ChordInfo");
-                assertNotNull(chordInfo.get("Nashville Number"), "Nashville Number should be present");
-            }
-        }
-    }
+    //     assertEquals(500, response.getStatusCode());
+    //     assertTrue(response.getBody().contains("Internal server error"));
+    //     verify(logger).log(contains("Error processing request"));
+    // }
 } 

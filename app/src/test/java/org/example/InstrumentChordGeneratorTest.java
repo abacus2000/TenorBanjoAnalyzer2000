@@ -35,23 +35,21 @@ class InstrumentChordGeneratorTest {
         List<ChordDiagram> majorDiagrams = generator.generateChord("C", ChordQuality.MAJOR, true, false, false, true, 4);
         List<ChordDiagram> minorDiagrams = generator.generateChord("C", ChordQuality.MINOR, true, false, false, true, 4);
     
-        // Ensure that both major and minor diagrams are generated
+
         assertFalse(majorDiagrams.isEmpty(), "Major diagrams should not be empty");
         assertFalse(minorDiagrams.isEmpty(), "Minor diagrams should not be empty");
     
-        // Check that the chord qualities are correct
+
         assertTrue(majorDiagrams.stream().allMatch(d -> d.getQuality() == ChordQuality.MAJOR), 
                    "All major diagrams should have MAJOR quality");
         assertTrue(minorDiagrams.stream().allMatch(d -> d.getQuality() == ChordQuality.MINOR), 
                    "All minor diagrams should have MINOR quality");
     
-        // Verify that the root notes are consistent
         assertTrue(majorDiagrams.stream().allMatch(d -> d.getRoot().equals("C")), 
                    "All major diagrams should have root note C");
         assertTrue(minorDiagrams.stream().allMatch(d -> d.getRoot().equals("C")), 
                    "All minor diagrams should have root note C");
     
-        // Check that at least one diagram differs in frets or notes
         boolean diagramsDiffer = majorDiagrams.stream()
             .anyMatch(major -> minorDiagrams.stream()
                 .noneMatch(minor -> major.getFrets().equals(minor.getFrets()) && 

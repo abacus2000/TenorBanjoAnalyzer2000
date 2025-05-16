@@ -1,266 +1,245 @@
 package org.example;
 
 import com.amazonaws.services.lambda.runtime.Context;
-import com.amazonaws.services.lambda.runtime.LambdaLogger;
 import com.amazonaws.services.lambda.runtime.RequestHandler;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.JsonNode;
 import java.util.*;
 import java.util.stream.Collectors;
+import com.amazonaws.services.lambda.runtime.events.APIGatewayProxyRequestEvent;
+import com.amazonaws.services.lambda.runtime.events.APIGatewayProxyResponseEvent;
 
-public class LocalChordGeneratorLambdaHandler implements RequestHandler<ChordRequest, Map<String, Object>> {
-    private final Map<String, String> flatToSharpMapping;
-    private final Map<String, String> sharpToFlatMapping;
+public class LocalChordGeneratorLambdaHandler implements RequestHandler<APIGatewayProxyRequestEvent, APIGatewayProxyResponseEvent> {
+    private static final Map<String, String> CORS_HEADERS = createCorsHeaders();
+    private static final String[] ROMAN_NUMERALS = {"I", "II", "III", "IV", "V", "VI", "VII"};
+    private static final List<String> NOTES = Arrays.asList("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B");
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+    
     private InstrumentChordGenerator generator;
 
-    public LocalChordGeneratorLambdaHandler() {
-        this.flatToSharpMapping = createFlatToSharpMapping();
-        this.sharpToFlatMapping = createSharpToFlatMapping();
+    private static Map<String, String> createCorsHeaders() {
+        Map<String, String> headers = new LinkedHashMap<>();
+        headers.put("Content-Type", "application/json");
+        headers.put("Access-Control-Allow-Origin", "*");
+        headers.put("Access-Control-Allow-Methods", "POST, OPTIONS");
+        headers.put("Access-Control-Allow-Headers", "Content-Type,X-Amz-Date,Authorization,X-Api-Key,x-api-key,X-Amz-Security-Token");
+        headers.put("Access-Control-Max-Age", "600");
+        return headers;
     }
 
     @Override
-    public Map<String, Object> handleRequest(ChordRequest request, Context context) {
-        LambdaLogger logger = context.getLogger();
-        logger.log("Processing request for key: " + request.getKey());
-
-        // validate tuning and string count
-        if (request.getTuning() == null || request.getTuning().isEmpty()) {
-            throw new IllegalArgumentException("Tuning cannot be null or empty");
+    public APIGatewayProxyResponseEvent handleRequest(APIGatewayProxyRequestEvent input, Context context) {
+        if ("OPTIONS".equals(input.getHttpMethod())) {
+            return createResponse(200, "{}");
         }
-
-        if (request.getStringCount() != request.getTuning().size()) {
-            String errorMessage = String.format(
-                "String count mismatch: Provided stringCount is %d but tuning array has %d values: %s",
-                request.getStringCount(),
-                request.getTuning().size(),
-                String.join(", ", request.getTuning())
-            );
-            logger.log("Error: " + errorMessage);
-            
-            Map<String, Object> errorResponse = new HashMap<>();
-            errorResponse.put("error", errorMessage);
-            errorResponse.put("statusCode", 400);
-            errorResponse.put("provided_string_count", request.getStringCount());
-            errorResponse.put("actual_tuning_size", request.getTuning().size());
-            errorResponse.put("tuning", request.getTuning());
-            return errorResponse;
-        }
-
-        // create generator with requested tuning
-        generator = new InstrumentChordGenerator(request.getTuning());
 
         try {
-            return processRequest(request, generator);
+            JsonNode requestJson = OBJECT_MAPPER.readTree(input.getBody());
+            
+            String key = requestJson.get("key").asText();
+            String scaleType = requestJson.get("scaleType").asText().toUpperCase();
+            int maxVariations = requestJson.get("maxVariations").asInt();
+            List<String> tuning = OBJECT_MAPPER.convertValue(requestJson.get("tuning"), 
+                new com.fasterxml.jackson.core.type.TypeReference<List<String>>() {});
+            int stringCount = requestJson.get("stringCount").asInt();
+            
+            if (stringCount != tuning.size()) {
+                Map<String, Object> errorResponse = new HashMap<>();
+                errorResponse.put("error", "String count mismatch");
+                errorResponse.put("provided_string_count", stringCount);
+                errorResponse.put("actual_tuning_size", tuning.size());
+                errorResponse.put("tuning", tuning);
+                
+                return createResponse(400, OBJECT_MAPPER.writeValueAsString(errorResponse));
+            }
+
+            if (generator == null || !tuning.equals(generator.getTuning())) {
+                generator = new InstrumentChordGenerator(tuning);
+            }
+
+            Map<String, Object> result = processChordRequest(
+                key,
+                scaleType,
+                maxVariations,
+                requestJson.get("allowFullChords").asBoolean(),
+                requestJson.get("allowPartialChords").asBoolean(),
+                requestJson.get("allowInversions").asBoolean(),
+                requestJson.get("allowOpenStrings").asBoolean(),
+                requestJson.get("maxFretSpan").asInt()
+            );
+            
+            return createResponse(200, OBJECT_MAPPER.writeValueAsString(result));
+
         } catch (Exception e) {
-            logger.log("Error processing request: " + e.getMessage());
-            Map<String, Object> errorResponse = new HashMap<>();
-            errorResponse.put("error", e.getMessage());
-            errorResponse.put("statusCode", 500);
-            errorResponse.put("key", request.getKey());
-            errorResponse.put("tuning", request.getTuning());
-            return errorResponse;
-        }
-    }
-
-    private Map<String, Object> processRequest(ChordRequest request, InstrumentChordGenerator generator) {
-        Map<String, Object> result = new HashMap<>();
-        result.put("key", request.getKey());
-        result.put("scale_type", request.getScaleType());
-
-        // create scale
-        List<String> scale = createScaleWithSharps(request.getKey(), request.getScaleType());
-        result.put("scale", scale);
-
-        // get chord diagrams
-        List<ChordDiagram> diagrams = generator.generateChord(
-            request.getKey(),
-            ChordQuality.valueOf(request.getScaleType()),
-            request.getAllowFullChords(),
-            request.getAllowPartialChords(),
-            request.getAllowInversions(),
-            request.getAllowOpenStrings(),
-            request.getMaxFretSpan()
-        );
-
-        // limit the number of diagrams based on maxVariations
-        int maxVariations = request.getMaxVariations();
-        if (maxVariations > 0 && diagrams.size() > maxVariations) {
-            diagrams = diagrams.subList(0, maxVariations);
-        }
-
-        // convert ChordDiagram objects to Maps
-        List<Map<String, Object>> chordData = diagrams.stream()
-            .map(diagram -> {
-                Map<String, Object> chordInfo = new HashMap<>();
-                String standardizedRoot = standardizeKey(diagram.getRoot());
-                chordInfo.put("Root", standardizedRoot);
-                chordInfo.put("Quality", diagram.getQuality());
-                
-                Map<String, Object> details = new HashMap<>();
-                details.put("Frets", diagram.getFrets());
-                details.put("Fingers", diagram.getFingers());
-                details.put("Mutes", diagram.getMutes());
-                details.put("Position", "Fret " + Collections.max(diagram.getFrets()));
-                details.put("IsPartial", diagram.isPartial());
-                details.put("Inversion", diagram.getInversion());
-                details.put("Notes", diagram.getNotes().stream()
-                    .map(Note::toString)
-                    .collect(Collectors.toList()));
-                details.put("NotesOnStrings", diagram.getNotesWithStrings());
-                
-                // add nashville number
-                String nashvilleNumber = getRomanNumeral(scale, standardizedRoot, diagram.getQuality().name());
-                details.put("Nashville Number", nashvilleNumber);
-
-                chordInfo.put("ChordInfo", details);
-                return chordInfo;
-            })
-            .collect(Collectors.toList());
-
-        // group variations by root note
-        Map<String, List<Map<String, Object>>> chordsByRoot = chordData.stream()
-            .collect(Collectors.groupingBy(chord -> (String) chord.get("Root")));
-
-        // format final response
-        List<Map<String, Object>> formattedChords = new ArrayList<>();
-        for (String chordRoot : scale) {
-            Map<String, Object> chordEntry = new HashMap<>();
-            chordEntry.put("root", sharpToFlatMapping.getOrDefault(chordRoot, chordRoot));
-            chordEntry.put("variations", chordsByRoot.getOrDefault(chordRoot, new ArrayList<>()));
-            formattedChords.add(chordEntry);
-        }
-
-        result.put("chords", formattedChords);
-        return result;
-    }
-
-    private Map<String, String> createFlatToSharpMapping() {
-        Map<String, String> mapping = new HashMap<>();
-        mapping.put("Bb", "A#");
-        mapping.put("Db", "C#");
-        mapping.put("Eb", "D#");
-        mapping.put("Gb", "F#");
-        mapping.put("Ab", "G#");
-        return mapping;
-    }
-
-    private Map<String, String> createSharpToFlatMapping() {
-        Map<String, String> mapping = new HashMap<>();
-        mapping.put("A#", "Bb");
-        mapping.put("C#", "Db");
-        mapping.put("D#", "Eb");
-        mapping.put("F#", "Gb");
-        mapping.put("G#", "Ab");
-        return mapping;
-    }
-
-    private String standardizeNoteName(String noteName) {
-        // handles double flats
-        if (noteName.contains("bb")) {
-            switch (noteName) {
-                case "Cbb": return "Bb";
-                case "Dbb": return "C";
-                case "Ebb": return "D";
-                case "Fbb": return "Eb";
-                case "Gbb": return "F";
-                case "Abb": return "G";
-                case "Bbb": return "A";
-                default: return noteName;
+            context.getLogger().log("Error processing request: " + e.getMessage());
+            e.printStackTrace();
+            
+            Map<String, String> errorBody = new HashMap<>();
+            errorBody.put("error", "Internal server error: " + e.getMessage());
+            try {
+                return createResponse(500, OBJECT_MAPPER.writeValueAsString(errorBody));
+            } catch (com.fasterxml.jackson.core.JsonProcessingException ex) {
+                return createResponse(500, "{\"error\": \"Internal server error\"}");
             }
         }
-        return noteName;
     }
 
-    public List<String> createScaleWithSharps(String key, String scaleType) {
-        // for now, returning a basic major scale - may need to expand this based on scaleType later
-        List<String> notes = Arrays.asList("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B");
-        int startIndex = notes.indexOf(standardizeKey(key));
+    private APIGatewayProxyResponseEvent createResponse(int statusCode, String body) {
+        APIGatewayProxyResponseEvent response = new APIGatewayProxyResponseEvent();
+        response.setStatusCode(statusCode);
+        response.setHeaders(CORS_HEADERS);
+        response.setBody(body);
+        return response;
+    }
+
+    private Map<String, Object> processChordRequest(
+            String key,
+            String scaleType,
+            int maxVariations,
+            boolean allowFullChords,
+            boolean allowPartialChords,
+            boolean allowInversions,
+            boolean allowOpenStrings,
+            int maxFretSpan) {
+        
+        List<String> scale = createScale(key, scaleType);
+        
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("key", key);
+        result.put("scale_type", scaleType);
+        result.put("scale", scale);
+        
+        List<Map<String, Object>> chordEntries = generateChordEntries(
+            scale, 
+            allowFullChords,
+            allowPartialChords, 
+            allowInversions,
+            allowOpenStrings,
+            maxFretSpan,
+            maxVariations
+        );
+        
+        result.put("chords", chordEntries);
+        return result;
+    }
+    
+    private List<Map<String, Object>> generateChordEntries(
+            List<String> scale, 
+            boolean allowFullChords,
+            boolean allowPartialChords, 
+            boolean allowInversions,
+            boolean allowOpenStrings,
+            int maxFretSpan,
+            int maxVariations) {
+            
+        List<Map<String, Object>> formattedChords = new ArrayList<>();
+        
+        for (String chordRoot : scale) {
+            Map<String, Object> chordEntry = new HashMap<>();
+            String displayRoot = Note.SHARP_TO_FLAT.getOrDefault(chordRoot, chordRoot);
+            chordEntry.put("root", displayRoot);
+            
+            List<Map<String, Object>> allVariations = new ArrayList<>();
+            
+            for (ChordQuality quality : ChordQuality.values()) {
+                List<ChordDiagram> diagrams = generator.generateChord(
+                    chordRoot,
+                    quality,
+                    allowFullChords,
+                    allowPartialChords,
+                    allowInversions,
+                    allowOpenStrings,
+                    maxFretSpan
+                );
+
+                if (maxVariations > 0 && diagrams.size() > maxVariations) {
+                    diagrams = diagrams.subList(0, maxVariations);
+                }
+
+                for (ChordDiagram diagram : diagrams) {
+                    Map<String, Object> chordInfo = createChordInfoMap(diagram, quality, scale);
+                    allVariations.add(chordInfo);
+                }
+            }
+            
+            chordEntry.put("variations", allVariations);
+            formattedChords.add(chordEntry);
+        }
+        
+        return formattedChords;
+    }
+    
+    private Map<String, Object> createChordInfoMap(ChordDiagram diagram, ChordQuality quality, List<String> scale) {
+        Map<String, Object> chordInfo = new HashMap<>();
+        String standardizedRoot = Note.standardizeNote(diagram.getRoot());
+        chordInfo.put("Root", standardizedRoot);
+        chordInfo.put("Quality", quality.name());
+        
+        Map<String, Object> details = new HashMap<>();
+        details.put("Frets", diagram.getFrets());
+        details.put("Fingers", diagram.getFingers());
+        details.put("Mutes", diagram.getMutes());
+        details.put("Position", "Fret " + Collections.max(diagram.getFrets()));
+        details.put("IsPartial", diagram.isPartial());
+        details.put("Inversion", diagram.getInversion());
+        details.put("Notes", diagram.getNotes().stream()
+            .map(Note::toString)
+            .collect(Collectors.toList()));
+        details.put("NotesOnStrings", diagram.getNotesWithStrings());
+        
+        String nashvilleNumber = getRomanNumeral(scale, standardizedRoot, quality.name());
+        details.put("Nashville Number", nashvilleNumber);
+
+        chordInfo.put("ChordInfo", details);
+        return chordInfo;
+    }
+
+    private List<String> createScale(String key, String scaleType) {
+        String sharpKey = Note.standardizeNote(key);
+        int rootIndex = NOTES.indexOf(sharpKey);
+        
+        if (rootIndex == -1) {
+            throw new IllegalArgumentException("Invalid key: " + key);
+        }
+        
+        int[] intervals = {0, 2, 4, 5, 7, 9, 11};
         List<String> scale = new ArrayList<>();
         
-        // major scale intervals generation: ... W W H W W W H (2 2 1 2 2 2 1)
-        int[] intervals = {0, 2, 4, 5, 7, 9, 11};
         for (int interval : intervals) {
-            scale.add(notes.get((startIndex + interval) % 12));
+            scale.add(NOTES.get((rootIndex + interval) % 12));
         }
+        
         return scale;
     }
 
     private String getRomanNumeral(List<String> scale, String chordRoot, String quality) {
-        String[] romanNumerals = {"I", "II", "III", "IV", "V", "VI", "VII"};
-        int position = scale.indexOf(standardizeKey(chordRoot));
+        int position = scale.indexOf(Note.standardizeNote(chordRoot));
         if (position == -1) {
-            return ""; // return empty string if chord not found in scale
+            return "";
         }
-        String romanNumeral = romanNumerals[position];
+        String romanNumeral = ROMAN_NUMERALS[position];
         return quality.equals("MAJOR") ? romanNumeral : romanNumeral.toLowerCase();
     }
 
-    public List<Map<String, Object>> generateChordData(String root) {
-        String sharpRoot = flatToSharpMapping.getOrDefault(root, root);
-        List<Map<String, Object>> chordData = new ArrayList<>();
-
-        for (ChordQuality quality : ChordQuality.values()) {
-            List<ChordDiagram> diagrams = generator.generateChord(sharpRoot, quality, true, false, true, true, 4);
-            for (ChordDiagram diagram : diagrams) {
-                Map<String, Object> chordInfo = new HashMap<>();
-                chordInfo.put("Root", sharpRoot);
-                chordInfo.put("Quality", quality.name());
-                Map<String, Object> diagramInfo = new HashMap<>();
-                diagramInfo.put("Frets", diagram.getFrets());
-                diagramInfo.put("Fingers", diagram.getFingers());
-                diagramInfo.put("Mutes", diagram.getMutes());
-                diagramInfo.put("Position", diagram.getPosition());
-                diagramInfo.put("Inversion", diagram.getInversion());
-                diagramInfo.put("IsPartial", diagram.isPartial());
-                diagramInfo.put("Notes", diagram.getNotes().stream().map(Note::toString).collect(Collectors.toList()));
-                diagramInfo.put("NotesOnStrings", diagram.getNotesWithStrings());
-                chordInfo.put("ChordInfo", diagramInfo);
-                chordData.add(chordInfo);
-            }
-        }
-
-        return chordData;
-    }
-
     public Map<String, Object> getScaleData(String key, String scaleType, int maxVariations) {
-        List<String> scale = createScaleWithSharps(key, scaleType);
+        List<String> scale = createScale(key, scaleType);
         Map<String, Object> result = new HashMap<>();
         result.put("key", key);
         result.put("scale_type", scaleType);
         result.put("scale", scale);
-        List<Map<String, Object>> chords = new ArrayList<>();
-    
-        for (String chord : scale) {
-            List<Map<String, Object>> chordData = generateChordData(chord);
-            List<Map<String, Object>> updatedVariations = new ArrayList<>();
-    
-            for (int i = 0; i < Math.min(chordData.size(), maxVariations); i++) {
-                Map<String, Object> variation = chordData.get(i);
-                String quality = (String) variation.get("Quality");
-                String romanNumeral = getRomanNumeral(scale, chord, quality);
-                ((Map<String, Object>) variation.get("ChordInfo")).put("Nashville Number", romanNumeral);
-                updatedVariations.add(variation);
-            }
-    
-            Map<String, Object> chordEntry = new HashMap<>();
-            chordEntry.put("root", sharpToFlatMapping.getOrDefault(chord, chord));
-            chordEntry.put("variations", updatedVariations);
-            chords.add(chordEntry);
-        }
-    
-        result.put("chords", chords);
+        
+        List<Map<String, Object>> chordEntries = generateChordEntries(
+            scale, 
+            true,  
+            false, 
+            true,  
+            true, 
+            4,    
+            maxVariations
+        );
+        
+        result.put("chords", chordEntries);
         return result;
-    }
-
-    private String standardizeKey(String key) {
-        // first... check if it's a flat key that needs to be converted
-        String standardKey = flatToSharpMapping.getOrDefault(key, key);
-        if (!Arrays.asList("A", "B", "C", "D", "E", "F", "G",
-                          "A#", "C#", "D#", "F#", "G#").contains(standardKey)) {
-            throw new IllegalArgumentException(
-                String.format("Invalid key: %s. Key must be one of: A, B, C, D, E, F, G " +
-                            "or their sharp/flat variants", key)
-            );
-        }
-        return standardKey;
     }
 }
 

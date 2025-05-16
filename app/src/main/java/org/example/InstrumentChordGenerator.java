@@ -4,20 +4,27 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 public class InstrumentChordGenerator {
+    private final List<String> tuning;
     private final Fretboard fretboard;
 
     public InstrumentChordGenerator(List<String> tuning) {
+        this.tuning = tuning;
         List<Note> tuningNotes = tuning.stream()
-                .map(note -> Note.getInstance(note.substring(0, note.length() - 1), 
-                        Integer.parseInt(note.substring(note.length() - 1))))
-                .collect(Collectors.toList());
+            .map(note -> Note.getInstance(note.substring(0, note.length() - 1), 
+                Integer.parseInt(note.substring(note.length() - 1))))
+            .collect(Collectors.toList());
         this.fretboard = new Fretboard(tuningNotes);
     }
 
-    public List<ChordDiagram> generateChord(String root, ChordQuality quality, boolean fullChord, 
-            boolean partialChord, boolean inversions, boolean openStrings, int maxFretSpan) {
+    public List<String> getTuning() {
+        return tuning;
+    }
+
+    public List<ChordDiagram> generateChord(String root, ChordQuality quality, boolean allowFullChords,
+                                          boolean allowPartialChords, boolean allowInversions,
+                                          boolean allowOpenStrings, int maxFretSpan) {
         List<String> chordNotes = getChordNotes(root, quality);
-        List<List<int[]>> shapes = buildShape(chordNotes, fullChord, partialChord, inversions, openStrings, maxFretSpan);
+        List<List<int[]>> shapes = buildShape(chordNotes, allowFullChords, allowPartialChords, allowInversions, allowOpenStrings, maxFretSpan);
         Map<List<Integer>, ChordDiagram> uniqueDiagrams = new HashMap<>();
 
         for (List<int[]> shape : shapes) {
@@ -30,35 +37,42 @@ public class InstrumentChordGenerator {
 
     private List<String> getChordNotes(String root, ChordQuality quality) {
         List<String> notes = Arrays.asList("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B");
-        int rootIndex = notes.indexOf(root);
+        
+        String sharpRoot = Fretboard.convertFlatToSharp(root);
+        int rootIndex = notes.indexOf(sharpRoot);
+        
+        if (rootIndex == -1) {
+            throw new IllegalArgumentException("Invalid root note: " + root);
+        }
+        
         return Arrays.stream(quality.getIntervals())
                 .map(interval -> notes.get((rootIndex + interval.getSemitones()) % 12))
                 .collect(Collectors.toList());
     }    
 
-    private List<List<int[]>> buildShape(List<String> chordNotes, boolean fullChord, boolean partialChord, 
-            boolean inversions, boolean openStrings, int maxFretSpan) {
+    private List<List<int[]>> buildShape(List<String> chordNotes, boolean allowFullChords, boolean allowPartialChords, 
+            boolean allowInversions, boolean allowOpenStrings, int maxFretSpan) {
         List<List<int[]>> shapes = new ArrayList<>();
-        if (fullChord) {
-            shapes.addAll(findFullChord(chordNotes, openStrings, maxFretSpan));
+        if (allowFullChords) {
+            shapes.addAll(findFullChord(chordNotes, allowOpenStrings, maxFretSpan));
         }
-        if (partialChord) {
-            shapes.addAll(findPartialChord(chordNotes, openStrings, maxFretSpan));
+        if (allowPartialChords) {
+            shapes.addAll(findPartialChord(chordNotes, allowOpenStrings, maxFretSpan));
         }
-        if (inversions) {
-            shapes.addAll(findInversions(chordNotes, openStrings, maxFretSpan));
+        if (allowInversions) {
+            shapes.addAll(findInversions(chordNotes, allowOpenStrings, maxFretSpan));
         }
         return shapes;
     }
 
-    private List<List<int[]>> findFullChord(List<String> chordNotes, boolean openStrings, int maxFretSpan) {
+    private List<List<int[]>> findFullChord(List<String> chordNotes, boolean allowOpenStrings, int maxFretSpan) {
         List<List<int[]>> shapes = new ArrayList<>();
         int numStrings = fretboard.getTuning().size();
         for (List<Integer> combo : generateCombinations(numStrings, chordNotes.size())) {
             List<int[]> shape = new ArrayList<>();
             for (int i = 0; i < combo.size(); i++) {
                 int string = combo.get(i);
-                if (openStrings && fretboard.getPitch(string, 0).getName().equals(chordNotes.get(i))) {
+                if (allowOpenStrings && fretboard.getPitch(string, 0).getName().equals(chordNotes.get(i))) {
                     shape.add(new int[]{string, 0});
                 } else {
                     for (int fret = 0; fret < 12; fret++) {
@@ -76,21 +90,21 @@ public class InstrumentChordGenerator {
         return shapes;
     }
 
-    private List<List<int[]>> findPartialChord(List<String> chordNotes, boolean openStrings, int maxFretSpan) {
+    private List<List<int[]>> findPartialChord(List<String> chordNotes, boolean allowOpenStrings, int maxFretSpan) {
         List<List<int[]>> shapes = new ArrayList<>();
         for (int r = 1; r < chordNotes.size(); r++) {
             for (List<String> subset : generateCombinations(chordNotes, r)) {
-                shapes.addAll(findFullChord(subset, openStrings, maxFretSpan));
+                shapes.addAll(findFullChord(subset, allowOpenStrings, maxFretSpan));
             }
         }
         return shapes;
     }
 
-    private List<List<int[]>> findInversions(List<String> chordNotes, boolean openStrings, int maxFretSpan) {
+    private List<List<int[]>> findInversions(List<String> chordNotes, boolean allowOpenStrings, int maxFretSpan) {
         List<List<int[]>> shapes = new ArrayList<>();
         List<List<String>> inversions = generatePermutations(chordNotes);
         for (List<String> inversion : inversions) {
-            shapes.addAll(findFullChord(inversion, openStrings, maxFretSpan));
+            shapes.addAll(findFullChord(inversion, allowOpenStrings, maxFretSpan));
         }
         return shapes;
     }
